@@ -1,0 +1,20 @@
+{
+  "name": "machine-learning-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "babel-node index.js"
+  },
+  "dependencies": {
+    "@babel/core": "7.11.6",
+    "@babel/node": "7.10.5",
+    "@babel/preset-env": "7.11.5",
+    "aws-sdk": "2.761.0",
+    "dotenv": "8.2.0",
+    "knex": "0.21.6",
+    "pg": "8.3.3"
+  },
+  "author": "",
+  "license": "ISC"
+}
