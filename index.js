@@ -1,6 +1,7 @@
 import {} from "dotenv/config";
 import knex from "knex";
-import aws from "aws-sdk";
+
+const jobName = process.env.JOB_NAME;
 
 const db = knex({
         client: "pg",
@@ -8,73 +9,77 @@ const db = knex({
     }
 );
 
-async function changeTaskStatus(taskId, name, newStatus) {
-
-    if (taskId) {
-        console.log("found existing task");
-        return await db
-            .update({ 
-                status: newStatus
-            })
-            .from("task")
-            .where("id", taskId)
-            .returning("*");
-    } else {
-        return await db
-            .insert({ 
-                name: name,
-                status: newStatus,
-            })
-            .into("task")
-            .returning("*");
-    }
+async function startTask() {
+    const inserted = await db
+        .insert({ 
+            name: jobName,
+            status: "RUNNING",
+        })
+        .into("task")
+        .returning("*");
+    return inserted[0].id;
 }
 
-async function processMessage(message) {
-    const { id, name } = JSON.parse(message.Body);
-    const task = await changeTaskStatus(id, name, "IN_PROGRESS");
-    
+async function completeTask(id) {
+    console.log(`Completed job ${jobName} with id ${id}`);
+    await db
+        .update({
+            status: "COMPLETED"
+        })
+        .from("task")
+        .where("id", id);
+}
+
+async function failTask(id, error) {
+    console.error(`Job ${jobName} with id ${id} failed: ${error}`);
+    await db
+        .update({
+            status: "FAILED"
+        })
+        .from("task")
+        .where("id", id);
+}
+
+function quickTask() {
+    return new Promise((resolve, reject) => {
+        if (Math.random() > 0.8) {
+            return reject("Oh no - something went wrong...");
+        }
+        return resolve();
+    });
+}
+
+function slowTask() {
     return new Promise((resolve, reject) => {
         setTimeout(() => {
-            changeTaskStatus(task.id, task.name, "COMPLETED")
-                .then(() => resolve());
-        }, 30000);
+            if (Math.random() > 0.8) {
+                return reject("Oh no - something went wrong...");
+            }
+            return resolve();
+        }, 120000)
     });
 }
 
-console.log("creating sqs client");
-const sqs = new aws.SQS({ 
-    region: "eu-west-2",
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    }  
-});
-
-const receiveParams = {
-    QueueUrl: process.env.QUEUE_URL,
-    MaxNumberOfMessages: 1,
-    WaitTimeSeconds: 10,
-};
-
-console.log("fetching message from sqs");
-sqs.receiveMessage(receiveParams, async (error, messages) => {
-    if (error) {
-        console.error(error);
-        return;
+async function processTask() {
+    const taskId = await startTask();
+    
+    try {
+        const task = jobName === "slow_task" ? slowTask : quickTask;
+        await task();
+        await completeTask(taskId);
+    } catch (error) {
+        await failTask(taskId, error);
+        throw Error(error);
     }
 
-    if (messages.length === 0) {
-        console.error("No data returned");
-        return;
-    }
+}
 
-    console.log("found message", messages[0]);
-    await processMessage(messages[0]);
-    console.log("processed the message.");
-    sqs.deleteMessage({
-        QueueUrl: process.env.QUEUE_URL,
-        ReceiptHandle: messages[0].ReceiptHandle
-    });
-    console.log("done! :)");
-});
+console.log(`starting job: ${jobName}`);
+processTask()
+    .then(() => console.log("task completed successfully"))
+    .catch((error) => console.log("task failed", error))
+    .finally(() => {
+        console.log(`shutting down.`); 
+        process.exit(0);
+    })
+
